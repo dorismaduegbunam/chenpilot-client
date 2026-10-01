@@ -34,6 +34,7 @@ import {
   incrementRetryCount,
   retryLabel,
 } from '@/utils/retryUtils';
+import authStorage from '@/utils/authStorage';
 
 // ─── Lazy store reference ─────────────────────────────────────────────────────
 // We use a lazy injection pattern instead of a direct import to avoid the
@@ -176,27 +177,18 @@ class ApiService {
     _store = store;
   }
 
-  setToken(token: string) {
+  setToken(token: string, rememberMe?: boolean) {
     this.token = token;
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('auth_token', token);
-    }
+    authStorage.setToken(token, rememberMe);
   }
 
   clearToken() {
     this.token = null;
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('auth_token');
-    }
+    authStorage.clearAuth();
   }
 
   loadTokenFromStorage() {
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('auth_token');
-      if (token) {
-        this.token = token;
-      }
-    }
+    this.token = authStorage.getToken();
   }
 
   // Authentication endpoints
@@ -226,7 +218,7 @@ class ApiService {
     return response.data;
   }
 
-  async login(data: LoginRequest): Promise<LoginResponse> {
+  async login(data: LoginRequest & { rememberMe?: boolean }): Promise<LoginResponse> {
     // Validate input data before processing
     if (!data || typeof data !== 'object') {
       throw new Error('Invalid login data');
@@ -242,7 +234,10 @@ class ApiService {
     
     const response = await this.api.post<LoginResponse>('/auth/login', data);
     if (response.data.success && response.data.data.token) {
-      this.setToken(response.data.data.token);
+      this.setToken(response.data.data.token, data.rememberMe !== false);
+      if (response.data.data.user) {
+        authStorage.setUser(response.data.data.user, data.rememberMe !== false);
+      }
     }
     return response.data;
   }
@@ -285,12 +280,6 @@ class ApiService {
       console.warn('Logout request failed, clearing local state anyway', error);
     } finally {
       this.clearToken();
-      // Purge all auth-related data from storage
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('user_data');
-        localStorage.removeItem('refresh_token'); // Clear refresh token if stored here
-        sessionStorage.clear(); // Clear session storage as well
-      }
     }
   }
 

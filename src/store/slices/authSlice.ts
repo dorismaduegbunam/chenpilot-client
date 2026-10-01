@@ -2,6 +2,7 @@ import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { User, LoginRequest, RegisterRequest } from '@/types';
 import apiService from '@/services/api';
 import authService from '@/services/auth.service';
+import authStorage from '@/utils/authStorage';
 
 interface AuthState {
   user: User | null;
@@ -222,30 +223,19 @@ const authSlice = createSlice({
       state.throttleSeconds = null;
     },
     initializeAuth: (state) => {
-      // Restore persisted auth state from localStorage.
-      // If no real token exists we leave the state as unauthenticated so the
-      // app routes the user to the login page — mock data is only used when
-      // the env variable NEXT_PUBLIC_USE_MOCK_AUTH is explicitly set to 'true'.
+      // Restore persisted auth state from authStorage (localStorage or sessionStorage)
       if (typeof window === 'undefined') return;
 
       const useMock = process.env.NEXT_PUBLIC_USE_MOCK_AUTH === 'true';
 
-      const storedToken = localStorage.getItem('auth_token');
-      const storedUser  = localStorage.getItem('user_data');
+      const storedToken = authStorage.getToken();
+      const storedUser  = authStorage.getUser();
 
       if (storedToken && storedUser) {
-        // Real credentials from a previous session.
-        try {
-          state.token           = storedToken;
-          state.user            = JSON.parse(storedUser) as User;
-          state.isAuthenticated = true;
-        } catch {
-          // Corrupt data — fall through to the unauthenticated default.
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('user_data');
-        }
+        state.token           = storedToken;
+        state.user            = storedUser;
+        state.isAuthenticated = true;
       } else if (useMock) {
-        // Development convenience: no backend needed when the flag is set.
         const mockUser: User = {
           id: 'mock-user-id',
           email: 'mock@example.com',
@@ -264,7 +254,6 @@ const authSlice = createSlice({
         state.token           = 'mock-jwt-token';
         state.isAuthenticated = true;
       }
-      // else: leave state.isAuthenticated = false → app will redirect to /auth/login
     },
   },
   extraReducers: (builder) => {
@@ -281,11 +270,9 @@ const authSlice = createSlice({
         state.isAuthenticated = true;
         state.error = null;
         state.throttleSeconds = null;
-        // Save to localStorage for persistence
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('auth_token', action.payload.token);
-          localStorage.setItem('user_data', JSON.stringify(action.payload.user));
-        }
+        const remember = action.payload.rememberMe !== false;
+        authStorage.setToken(action.payload.token, remember);
+        authStorage.setUser(action.payload.user, remember);
       })
       .addCase(login.rejected, (state, action) => {
         state.isLoading = false;
@@ -312,11 +299,8 @@ const authSlice = createSlice({
         state.token = action.payload.token;
         state.isAuthenticated = true;
         state.error = null;
-        // Save to localStorage for persistence
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('auth_token', action.payload.token);
-          localStorage.setItem('user_data', JSON.stringify(action.payload.user));
-        }
+        authStorage.setToken(action.payload.token, true);
+        authStorage.setUser(action.payload.user, true);
       })
       .addCase(register.rejected, (state, action) => {
         state.isLoading = false;
@@ -330,11 +314,7 @@ const authSlice = createSlice({
         state.isAuthenticated = false;
         state.error = null;
         state.throttleSeconds = null;
-        // Clear localStorage on logout
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('user_data');
-        }
+        authStorage.clearAuth();
       })
       // Load User
       .addCase(loadUser.pending, (state) => {
@@ -389,6 +369,8 @@ const authSlice = createSlice({
         state.token = action.payload.token;
         state.isAuthenticated = true;
         state.error = null;
+        authStorage.setToken(action.payload.token, true);
+        authStorage.setUser(action.payload.user, true);
       })
       .addCase(googleAuth.rejected, (state, action) => {
         state.isLoading = false;
@@ -405,21 +387,14 @@ const authSlice = createSlice({
         state.token = action.payload.token;
         state.isAuthenticated = true;
         state.error = null;
-        // Update localStorage
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('auth_token', action.payload.token);
-        }
+        authStorage.setToken(action.payload.token);
       })
       .addCase(refreshToken.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload as string;
         state.isAuthenticated = false;
         state.token = null;
-        // Clear localStorage on refresh failure
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('user_data');
-        }
+        authStorage.clearAuth();
       })
       // Fetch Profile
       .addCase(fetchProfile.fulfilled, (state, action) => {

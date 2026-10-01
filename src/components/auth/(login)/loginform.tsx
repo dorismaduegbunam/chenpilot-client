@@ -17,6 +17,7 @@ import { getSafeRedirectUrl } from "@/utils/auth";
 interface LoginFormData {
   email: string;
   password: string;
+  rememberMe?: boolean;
 }
 
 export default function LoginForm() {
@@ -74,6 +75,9 @@ export default function LoginForm() {
     formState: { errors },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
+    defaultValues: {
+      rememberMe: true,
+    },
   });
 
   const onSubmit = async (data: LoginFormData) => {
@@ -163,9 +167,10 @@ export default function LoginForm() {
             <input
               id="remember-me"
               type="checkbox"
-              className="w-4 h-4 border border-white/10 bg-transparent"
+              {...register("rememberMe")}
+              className="w-4 h-4 border border-white/10 bg-transparent rounded cursor-pointer"
             />
-            Remember me
+            Remember me for 30 days
           </label>
           <Link
             href="/auth/forgot-password"
