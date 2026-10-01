@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { User, LoginRequest, RegisterRequest } from '@/types';
 import apiService from '@/services/api';
+import authService from '@/services/auth.service';
 
 interface AuthState {
   user: User | null;
@@ -8,6 +9,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  throttleSeconds: number | null;
 }
 
 const initialState: AuthState = {
@@ -16,29 +18,50 @@ const initialState: AuthState = {
   isAuthenticated: false,
   isLoading: false,
   error: null,
+  throttleSeconds: null,
 };
 
 // Async thunks
 export const login = createAsyncThunk(
   'auth/login',
-  async (credentials: LoginRequest) => {
-    // Mock login - always succeed
-    const mockUser: User = {
-      id: 'mock-user-id',
-      email: credentials.email,
-      name: 'Mock User',
-      address: '0x1234567890abcdef',
-      publicKey: '0xabcdef1234567890',
-      isDeployed: true,
-      isFunded: true,
-      tokenType: "STRK",
-      authProvider: "email",
-      isEmailVerified: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    const mockToken = 'mock-jwt-token';
-    return { user: mockUser, token: mockToken };
+  async (credentials: LoginRequest & { rememberMe?: boolean }, { rejectWithValue }) => {
+    try {
+      if (process.env.NEXT_PUBLIC_USE_MOCK_AUTH === 'true') {
+        const mockUser: User = {
+          id: 'mock-user-id',
+          email: credentials.email,
+          name: 'Mock User',
+          address: '0x1234567890abcdef',
+          publicKey: '0xabcdef1234567890',
+          isDeployed: true,
+          isFunded: true,
+          tokenType: "STRK",
+          authProvider: "email",
+          isEmailVerified: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        const mockToken = 'mock-jwt-token';
+        return { user: mockUser, token: mockToken, rememberMe: credentials.rememberMe };
+      }
+      const response = await apiService.login(credentials);
+      if (response.success && response.data) {
+        return { user: response.data.user, token: response.data.token, rememberMe: credentials.rememberMe };
+      }
+      return rejectWithValue(response.message || 'Login failed');
+    } catch (error: any) {
+      if (error?.response?.status === 429) {
+        const retryAfter = authService.getRetryAfterSeconds(error);
+        return rejectWithValue({
+          message: error?.response?.data?.message || 'Too many login attempts. Please try again later.',
+          status: 429,
+          retryAfter: retryAfter || 60,
+        });
+      }
+      return rejectWithValue(
+        error?.response?.data?.message || error?.message || 'Login failed'
+      );
+    }
   }
 );
 
@@ -184,6 +207,9 @@ const authSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
+    clearThrottle: (state) => {
+      state.throttleSeconds = null;
+    },
     setToken: (state, action: PayloadAction<string>) => {
       state.token = action.payload;
       state.isAuthenticated = true;
@@ -193,6 +219,7 @@ const authSlice = createSlice({
       state.token = null;
       state.isAuthenticated = false;
       state.error = null;
+      state.throttleSeconds = null;
     },
     initializeAuth: (state) => {
       // Restore persisted auth state from localStorage.
@@ -253,6 +280,7 @@ const authSlice = createSlice({
         state.token = action.payload.token;
         state.isAuthenticated = true;
         state.error = null;
+        state.throttleSeconds = null;
         // Save to localStorage for persistence
         if (typeof window !== 'undefined') {
           localStorage.setItem('auth_token', action.payload.token);
@@ -261,8 +289,17 @@ const authSlice = createSlice({
       })
       .addCase(login.rejected, (state, action) => {
         state.isLoading = false;
-        state.error = action.payload as string;
         state.isAuthenticated = false;
+        if (typeof action.payload === 'object' && action.payload !== null && (action.payload as any).status === 429) {
+          state.error = (action.payload as any).message;
+          state.throttleSeconds = (action.payload as any).retryAfter;
+        } else if (typeof action.payload === 'string') {
+          state.error = action.payload;
+          state.throttleSeconds = null;
+        } else {
+          state.error = (action.payload as any)?.message || 'Login failed';
+          state.throttleSeconds = null;
+        }
       })
       // Register
       .addCase(register.pending, (state) => {
@@ -292,6 +329,7 @@ const authSlice = createSlice({
         state.token = null;
         state.isAuthenticated = false;
         state.error = null;
+        state.throttleSeconds = null;
         // Clear localStorage on logout
         if (typeof window !== 'undefined') {
           localStorage.removeItem('auth_token');
@@ -390,6 +428,6 @@ const authSlice = createSlice({
   },
 });
 
-export const { clearError, setToken, clearAuth, initializeAuth } = authSlice.actions;
+export const { clearError, clearThrottle, setToken, clearAuth, initializeAuth } = authSlice.actions;
 export { login, register, logout, loadUser, updateProfile, changePassword, googleAuth, refreshToken, fetchProfile };
 export default authSlice.reducer;

@@ -1,10 +1,10 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema } from "@/utils/validation";
 import { useAppDispatch, useAppSelector } from "@/store";
-import { login } from "@/store/slices/authSlice";
+import { login, clearThrottle } from "@/store/slices/authSlice";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignIn";
@@ -21,8 +21,38 @@ interface LoginFormData {
 export default function LoginForm() {
   const router = useRouter();
   const dispatch = useAppDispatch();
-  const { isLoading } = useAppSelector((state) => state.auth);
+  const { isLoading, throttleSeconds } = useAppSelector((state) => state.auth);
   const [showPassword, setShowPassword] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (throttleSeconds && throttleSeconds > 0) {
+      setCountdown(throttleSeconds);
+    }
+  }, [throttleSeconds]);
+
+  useEffect(() => {
+    if (countdown === null || countdown <= 0) return;
+
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev === null || prev <= 1) {
+          clearInterval(timer);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [countdown]);
+
+  useEffect(() => {
+    return () => {
+      setCountdown(null);
+      dispatch(clearThrottle());
+    };
+  }, [dispatch]);
 
   const {
     register,
@@ -36,9 +66,16 @@ export default function LoginForm() {
     try {
       await dispatch(login(data)).unwrap();
       toast.success("Successfully logged in!");
+      setCountdown(null);
       router.push("/chat");
     } catch (error: any) {
-      toast.error(error?.message || "Login failed");
+      const status = error?.status;
+      const retryAfter = error?.retryAfter;
+      if (status === 429 || retryAfter) {
+        const secs = retryAfter || 60;
+        setCountdown(secs);
+      }
+      toast.error(error?.message || (typeof error === "string" ? error : "Login failed"));
     }
   };
 
@@ -126,14 +163,19 @@ export default function LoginForm() {
 
         <Button
           onClick={handleSubmit(onSubmit)}
-          disabled={isLoading}
-          className="group w-full px-10 py-4 text-base font-light rounded-full bg-white text-black hover:bg-white/90 transition-all duration-500 flex items-center justify-center gap-3"
+          disabled={isLoading || (countdown !== null && countdown > 0)}
+          aria-disabled={isLoading || (countdown !== null && countdown > 0)}
+          className="group w-full px-10 py-4 text-base font-light rounded-full bg-white text-black hover:bg-white/90 transition-all duration-500 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? (
             <>
               <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
               Signing in...
             </>
+          ) : countdown !== null && countdown > 0 ? (
+            <span aria-live="polite">
+              Too many attempts. Retry in {countdown}s
+            </span>
           ) : (
             <>
               Sign In
@@ -141,6 +183,11 @@ export default function LoginForm() {
             </>
           )}
         </Button>
+        {countdown !== null && countdown > 0 && (
+          <div role="alert" aria-live="polite" className="mt-2 text-xs text-amber-400 font-light text-center">
+            Rate limit reached. Submit re-enables in {countdown} second{countdown === 1 ? '' : 's'}.
+          </div>
+        )}
       </div>
 
       <div className="mt-8">

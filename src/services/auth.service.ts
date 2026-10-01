@@ -43,6 +43,22 @@ class AuthService {
     const data = localStorage.getItem('user_data');
     return data ? JSON.parse(data) : null;
   }
+
+  /**
+   * Helper to parse Retry-After header from 429 responses.
+   */
+  getRetryAfterSeconds(error: any): number {
+    if (error?.response?.status === 429) {
+      const headers = error.response?.headers;
+      const header = headers?.['retry-after'] || headers?.['Retry-After'] || (headers?.get && headers.get('retry-after'));
+      if (header) {
+        const seconds = parseInt(String(header), 10);
+        if (!isNaN(seconds) && seconds > 0) return seconds;
+      }
+      return 60;
+    }
+    return 0;
+  }
 }
 
 export const authService = new AuthService();
