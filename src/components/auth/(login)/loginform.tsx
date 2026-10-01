@@ -9,9 +9,10 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignIn";
 import { Eye, EyeOff, ArrowRight } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import toast from "react-hot-toast";
+import { getSafeRedirectUrl } from "@/utils/auth";
 
 interface LoginFormData {
   email: string;
@@ -20,10 +21,23 @@ interface LoginFormData {
 
 export default function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const dispatch = useAppDispatch();
   const { isLoading, throttleSeconds } = useAppSelector((state) => state.auth);
   const [showPassword, setShowPassword] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+
+  const handleSuccessRedirect = () => {
+    let target = searchParams?.get("redirect");
+    if (!target && typeof window !== "undefined") {
+      target = sessionStorage.getItem("redirect_after_login");
+    }
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("redirect_after_login");
+    }
+    const destination = getSafeRedirectUrl(target, "/dashboard");
+    router.push(destination);
+  };
 
   useEffect(() => {
     if (throttleSeconds && throttleSeconds > 0) {
@@ -67,7 +81,7 @@ export default function LoginForm() {
       await dispatch(login(data)).unwrap();
       toast.success("Successfully logged in!");
       setCountdown(null);
-      router.push("/chat");
+      handleSuccessRedirect();
     } catch (error: any) {
       const status = error?.status;
       const retryAfter = error?.retryAfter;
@@ -204,7 +218,7 @@ export default function LoginForm() {
 
         <div className="mt-6">
           <GoogleSignInButton
-            onSuccess={() => router.push("/chat")}
+            onSuccess={handleSuccessRedirect}
             onError={(error) => console.error(error)}
             className="w-full px-10 py-4 text-base font-light rounded-full border border-white/10 text-black hover:text-white hover:border-white/20 transition-all duration-500"
           />
