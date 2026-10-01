@@ -27,23 +27,32 @@ export default function GoogleSignIn({
   const buttonRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  const hasClientId = googleAuthService.hasClientId();
 
   useEffect(() => {
+    if (!hasClientId) {
+      setInitError('Google Client ID is not configured (missing NEXT_PUBLIC_GOOGLE_CLIENT_ID)');
+      return;
+    }
+
     const initializeGoogleAuth = async () => {
       try {
         await googleAuthService.initialize();
         setIsInitialized(true);
-      } catch (error) {
-        console.error('Failed to initialize Google Auth:', error);
-        onError?.('Failed to initialize Google authentication');
+      } catch (error: any) {
+        const msg = error?.message || 'Failed to initialize Google authentication';
+        setInitError(msg);
+        onError?.(msg);
       }
     };
 
     initializeGoogleAuth();
-  }, [onError]);
+  }, [hasClientId, onError]);
 
   useEffect(() => {
-    if (isInitialized && buttonRef.current) {
+    if (isInitialized && buttonRef.current && hasClientId) {
       googleAuthService.renderButton(buttonRef.current.id, {
         theme,
         size,
@@ -53,21 +62,21 @@ export default function GoogleSignIn({
         width: 250,
       });
     }
-  }, [isInitialized, theme, size, buttonText]);
+  }, [isInitialized, theme, size, buttonText, hasClientId]);
 
   const handleGoogleSignIn = async () => {
-    if (isLoading) return;
+    if (isLoading || !hasClientId || initError) return;
     
     setIsLoading(true);
     try {
       const result = await googleAuthService.signIn();
       
       if (result.success && result.token) {
-        // Dispatch Google auth action with the token
         await dispatch(googleAuth(result.token)).unwrap();
-        
         toast.success('Successfully signed in with Google!');
         onSuccess?.();
+      } else if (result.cancelled) {
+        toast('Google sign-in was cancelled', { icon: 'ℹ️' });
       } else {
         const errorMessage = result.error || 'Google authentication failed';
         toast.error(errorMessage);
@@ -82,6 +91,14 @@ export default function GoogleSignIn({
     }
   };
 
+  if (!hasClientId || initError) {
+    return (
+      <div className={`p-3 text-center border border-amber-500/20 rounded-lg bg-amber-500/10 text-amber-300 text-xs font-light ${className}`} data-testid="google-signin-disabled">
+        Google Sign-In disabled: missing NEXT_PUBLIC_GOOGLE_CLIENT_ID
+      </div>
+    );
+  }
+
   if (!isInitialized) {
     return (
       <div className={`flex items-center justify-center ${className}`}>
@@ -94,11 +111,17 @@ export default function GoogleSignIn({
   }
 
   return (
-    <div className={`google-signin-container ${className}`}>
+    <div className={`google-signin-container relative ${className}`}>
+      {isLoading && (
+        <div className="absolute inset-0 bg-black/40 backdrop-blur-xs rounded-lg flex items-center justify-center z-10">
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+          <span className="ml-2 text-xs text-white">Signing in...</span>
+        </div>
+      )}
       <div
         ref={buttonRef}
         id="google-signin-button"
-        className="w-full"
+        className={`w-full ${isLoading ? 'pointer-events-none opacity-60' : ''}`}
         onClick={handleGoogleSignIn}
       />
     </div>
@@ -119,20 +142,21 @@ export function GoogleSignInButton({
 }) {
   const dispatch = useAppDispatch();
   const [isLoading, setIsLoading] = useState(false);
+  const hasClientId = googleAuthService.hasClientId();
 
   const handleClick = async () => {
-    if (isLoading) return;
+    if (isLoading || !hasClientId) return;
     
     setIsLoading(true);
     try {
       const result = await googleAuthService.signIn();
       
       if (result.success && result.token) {
-        // Dispatch Google auth action with the token
         await dispatch(googleAuth(result.token)).unwrap();
-        
         toast.success('Successfully signed in with Google!');
         onSuccess?.();
+      } else if (result.cancelled) {
+        toast('Google sign-in was cancelled', { icon: 'ℹ️' });
       } else {
         const errorMessage = result.error || 'Google authentication failed';
         toast.error(errorMessage);
@@ -147,10 +171,30 @@ export function GoogleSignInButton({
     }
   };
 
+  if (!hasClientId) {
+    return (
+      <button
+        disabled
+        title="Missing NEXT_PUBLIC_GOOGLE_CLIENT_ID"
+        className={`
+          flex items-center justify-center w-full px-4 py-3 border border-red-500/30 
+          rounded-full bg-red-500/10 text-red-300 text-xs font-light
+          cursor-not-allowed opacity-60
+          ${className}
+        `}
+        data-testid="google-signin-disabled"
+      >
+        Google Sign-In unavailable (Missing Client ID)
+      </button>
+    );
+  }
+
   return (
     <button
+      type="button"
       onClick={handleClick}
       disabled={isLoading}
+      aria-disabled={isLoading}
       className={`
         flex items-center justify-center w-full px-4 py-2 border border-gray-300 
         rounded-lg shadow-sm bg-white text-gray-700 hover:bg-gray-50 
@@ -161,7 +205,10 @@ export function GoogleSignInButton({
       `}
     >
       {isLoading ? (
-        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900 dark:border-white"></div>
+        <div className="flex items-center justify-center gap-2">
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900 dark:border-white"></div>
+          <span>Signing in...</span>
+        </div>
       ) : (
         <>
           <svg
